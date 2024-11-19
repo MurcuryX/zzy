@@ -3,6 +3,7 @@ import numpy as np
 from collections import deque
 import time
 import utils
+import math
 
 colour = ((0, 205, 205), (154, 250, 0), (34, 34, 178), (211, 0, 148), (255, 118, 72), (137, 137, 139))  # 定义矩形颜色
 video = "./video/vtest2.mp4"
@@ -21,6 +22,9 @@ height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
 fps = int(camera.get(cv2.CAP_PROP_FPS))
 print("width:", width, "height:", height)
 
+total_floors = 13  # 总层数
+floor_height_in_pixels = height / total_floors
+
 # 导出视频
 out = cv2.VideoWriter(
     "./video/output1.avi",
@@ -35,6 +39,7 @@ last_gray = gray_lwpCV
 
 pts = [deque(maxlen=30) for _ in range(99999)]
 last_time = 0
+
 
 photo_buffer = []
 
@@ -102,7 +107,7 @@ while True:
         count += 1
         rect = cv2.boundingRect(cont)
         x1, y1, w, h = rect
-        center = ((int((x1 + x1 + w) / 2), int((y1 + y1 + h) / 2)))
+        center = (int((x1 + x1 + w) / 2), int((y1 + y1 + h) / 2))
         pts[count].append(center)
         cv2.circle(frame_lwpCV, center, 10, (0, 0, 255))
 
@@ -119,18 +124,33 @@ while True:
             roi = frame_lwpCV[y1:y1+h, x1:x1+w]
             avg_brightness = np.mean(roi)
 
+            # 计算位置
+            position_score = (y1 + h / 2) / height  # 位置越靠上，分数越高
+
+                        # 计算预警概率
+            probability = (
+                0.45 * (speed / 100) +
+                0.5 * (abs(direction) / 90) +
+                0.05 * position_score
+            )
+            probability = min(1.0, probability)  # 确保概率不超过1
+
             # 过滤条件
             if speed > 5 and (direction > 45 or direction < -45) and avg_brightness > 50:
                 cv2.rectangle(frame_lwpCV, (x1, y1), (x1 + w, y1 + h), colour[count % 6], 3)
                 y = 10 if y1 < 10 else y1
                 cv2.putText(frame_lwpCV, "object", (x1, y), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 2)
-                cv2.line(frame_lwpCV, (pts[count][-2]), (pts[count][-1]), (255, 0, 0), 4)
+                # cv2.line(frame_lwpCV, (pts[count][-2]), (pts[count][-1]), (255, 0, 0), 4)
                 if time.time() - last_time > 5:
-                    print("object detected")
+                    #计算层数，由于仰视角度，需要修正单楼层高度
+                    adjustment_factor = 1 - (y1 / height) * 0.3
+                    adjusted_floor_height = floor_height_in_pixels * adjustment_factor
+                    object_floor = total_floors - math.floor(y1 / adjusted_floor_height)
+                    print(f"object detected at {object_floor} floor.")
                     last_time = time.time()
                     # 将当前帧保存到photo_buffer
                     photo_buffer.append(utils.frame2base64(frame_lwpCV))
-                    utils.post(1, 1, 0.9, photo_buffer)
+                    utils.post(object_floor, 1, probability, photo_buffer)
                     photo_buffer = []
                 out.write(frame_lwpCV)
 
